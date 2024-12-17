@@ -2,6 +2,9 @@
 
 import pygame
 import numpy as np
+from graphics import render_text, draw_button, draw_hand
+from generators import generate_hand
+from utils import check_collision
 
 pygame.init()
 
@@ -16,7 +19,7 @@ BLACK = (0, 0, 0)
 GRAY = (128, 128, 128)
 TICKRATE = 60
 
-SCREEN_WIDTH = (CARD_WIDTH * HAND_SIZE) + (CARD_SPACING * HAND_SIZE) + 100
+SCREEN_WIDTH = (CARD_WIDTH * HAND_SIZE) + (CARD_SPACING * HAND_SIZE) + CARD_SPACING
 SCREEN_HEIGHT = 1000
 SCREEN_SIZE = SCREEN_WIDTH, SCREEN_HEIGHT
 
@@ -34,69 +37,23 @@ font = pygame.font.Font(None, 30)
 # card setup
 card_colors = [(np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)) for _ in range(HAND_SIZE)]
 
-def generate_hand(pos_x: int, pos_y: int, hand_size: int, spacing: int)-> list[pygame.Rect]: 
-    """
-    Generate hand of card rectangles positioned horizontally
-    Args: 
-        pos_x (int): x position of first card
-        pos_y (int): y position of first card
-        hand_size (int): number of cards in hand
-        spacing (int): horizontal space between cards
-    Returns: 
-        list[pygame.rect]: list of card rectangles
-    """
-    return [pygame.Rect(pos_x + i * (CARD_WIDTH + spacing), pos_y, CARD_WIDTH, CARD_HEIGHT) for i in range(hand_size)]
-
-def draw_button(pos_x: int, pos_y: int, color: tuple[int, int, int], text: str) -> pygame.Rect:
-    """
-    Draws a button on the screen.
-
-    Args: 
-        screen (pygame.Surface): Surface to draw on.
-        rect (pygame.Rect): Rectangle of the button.
-        color (tuple[int, int, int]): Color of the button.
-        text (str): Text to display on the button.
-    """
-    buttonrect = pygame.Rect(pos_x, pos_y, BUTTON_WIDTH, BUTTON_HEIGHT)
-    pygame.draw.rect(screen, color, buttonrect, border_radius=BORDER_RADII)
-    render_text(screen, font, text, BLACK, (pos_x + BUTTON_WIDTH // 2, pos_y + BUTTON_HEIGHT // 2))
-
-    
-    return buttonrect
-
-def draw_hand(screen: pygame.Surface, cards: list[pygame.Rect], colors: list[tuple[int, int, int]]) -> None:
-    """
-    Draws the hand of cards on the screen.
-
-    Args: 
-        screen (pygame.Surface): Surface to draw on.
-        cards: list[pygame.Rect]: list of card rectangles
-        colors: list[tuple[int, int, int]]: list of card colors
-    """
-    for rect, color in zip(cards, card_colors):
-        pygame.draw.rect(screen, color, rect, border_radius=BORDER_RADII)
-
-def render_text(screen: pygame.Surface, font: pygame.font.Font, text: str, color: tuple[int, int, int], pos: tuple[int, int]) -> None:
-    """
-    Renders text on the screen at the specified position.
-    
-    Args: 
-        screen (pygame.Surface): Surface to draw on.
-        font (pygame.font.Font): Font to use.
-        text (str): Text to render.
-        color (tuple[int, int, int]): Color of the text.
-        pos (tuple[int, int]): Position of the text.
-    """
-    text_surface = font.render(text, True, color)
-    text_rect = text_surface.get_rect(center=pos)
-    screen.blit(text_surface, text_rect)
-
 # Generate initial hand
-CURRENT_HAND = generate_hand(100, 300, HAND_SIZE, CARD_SPACING)
-RESET_BUTTON = draw_button(SCREEN_WIDTH // 2, 100, BUTTON_COLOR, "Reset Hand")
+STARTING_HAND = generate_hand(CARD_SPACING, 300, HAND_SIZE, CARD_SPACING, CARD_WIDTH, CARD_HEIGHT)
+CURRENT_HAND = [
+    {"rect": pygame.Rect(*rect_data), "color": color, "velocity": [0,0]}
+    for rect_data, color in STARTING_HAND
+]
+
+RESET_BUTTON = draw_button(screen, SCREEN_WIDTH // 2 - BUTTON_WIDTH // 2, 100, BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_COLOR, BORDER_RADII, "Reset Hand", font, BLACK)
 SELECTED_CARD = None
 CARD_CLICKED = False
+mouse_offset_x, mouse_offset_y = 0, 0
 RUNNING = True
+
+check_collision()
+
+GRAVITY = 0.5
+GROUND_HEIGHT = SCREEN_HEIGHT
 
 # frame rate
 clock = pygame.time.Clock()
@@ -111,40 +68,57 @@ while RUNNING:
     # MOUSE BUTTON DOWN
         elif event.type == pygame.MOUSEBUTTONDOWN:
             for i in range(len(CURRENT_HAND) - 1, -1, -1):
-                if CURRENT_HAND[i].collidepoint(event.pos):
-                    SELECTED_CARD = CURRENT_HAND[i]
+                card = CURRENT_HAND[i]
+                rect = card["rect"]
+                color = card["color"]
+
+                if rect.collidepoint(event.pos):
+                    SELECTED_CARD = card
                     CARD_CLICKED = True
 
                     # calculate offset between mouse pos and top left corner of card
                     mouse_x, mouse_y = pygame.mouse.get_pos()
-                    mouse_offset_x =mouse_x - SELECTED_CARD.topleft[0]
-                    mouse_offset_y = mouse_y - SELECTED_CARD.topleft[1]
+                    mouse_offset_x = mouse_x - rect.topleft[0]
+                    mouse_offset_y = mouse_y - rect.topleft[1]
 
-                    card_rect = CURRENT_HAND.pop(i)
-                    card_color = card_colors.pop(i)
-                    CURRENT_HAND.append(card_rect)
-                    card_colors.append(card_color)
+                    CURRENT_HAND.append(CURRENT_HAND.pop(i))
                     break
 
             if RESET_BUTTON.collidepoint(event.pos):
-                CURRENT_HAND = generate_hand(100, 300, HAND_SIZE, CARD_SPACING)
-                # card_colors = [(np.random.randint(0, 255), np.random.randint(0, 255), np.random.randint(0, 255)) for _ in range(HAND_SIZE)]
+                CURRENT_HAND = [
+                    {"rect": pygame.Rect(*rect_data), "color": color, "velocity": [0, 0]}
+                    for rect_data, color in STARTING_HAND
+                ]
         elif event.type == pygame.MOUSEBUTTONUP:
             CARD_CLICKED = False
+            SELECTED_CARD = None
+    
+    # UPDATE FOR PHYSICS
+    for card in CURRENT_HAND:
+        if not CARD_CLICKED or SELECTED_CARD != card:
+            card["velocity"][1] += GRAVITY
+            card["rect"].y += card["velocity"][1]
+
+            # STOP CARD WHEN GROUND IS HIT
+            if card["rect"].y + card["rect"].height >= GROUND_HEIGHT:
+                card["rect"].y = GROUND_HEIGHT - card["rect"].height
+                card["velocity"][1] = 0
 
 # UPDATE CARD POS
     if CARD_CLICKED and SELECTED_CARD:
-        mouse_x, mouse_y = pygame.mouse.get_pos()
-        SELECTED_CARD.topleft = (mouse_x - mouse_offset_x, mouse_y - mouse_offset_y)
+        
+        if "rect" in SELECTED_CARD: 
+            mouse_x, mouse_y = pygame.mouse.get_pos()
+            SELECTED_CARD["rect"].topleft = (mouse_x - mouse_offset_x, mouse_y - mouse_offset_y)
+        SELECTED_CARD["velocity"] = [0, 0]
 
 # DRAWING 
-
     screen.fill(WHITE)
     
     # draw cards except for the selected card. 
-    draw_hand(screen, CURRENT_HAND, card_colors)
+    draw_hand(screen, CURRENT_HAND, BORDER_RADII)
 
-    RESET_BUTTON = draw_button(SCREEN_WIDTH // 2, 100, BUTTON_COLOR, "Reset Hand")
+    RESET_BUTTON = draw_button(screen, SCREEN_WIDTH // 2 - BUTTON_WIDTH // 2, 100, BUTTON_WIDTH, BUTTON_HEIGHT, BUTTON_COLOR, BORDER_RADII, "Reset Hand", font, BLACK)
     
     render_text(screen, font, "Click and Drag the cards!", (0, 0, 0), (SCREEN_WIDTH // 2, 50))
     pygame.display.flip()
